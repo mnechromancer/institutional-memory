@@ -19,10 +19,52 @@ from anthropic import Anthropic
 
 
 TEST_QUESTION = (
-    "I just joined the company and I need read-only prod access to debug an "
-    "issue tomorrow. What do I do? Be specific about the steps and the people "
-    "I need to talk to."
+    "KSE's VP of Technology Lyra Antilles just sent a message asking us to "
+    "prepare a renewal proposal. What do we know going into that call? "
+    "Full picture — their history, live threats, key contacts, commercial "
+    "situation, and what blows this up if we get it wrong."
 )
+
+MISSION_BRIEF = """
+╔══════════════════════════════════════════════════════════════╗
+║  MISSION BRIEF — SESSION 1                                   ║
+║  Location:  Anthropic Basecamp, San Francisco                ║
+║  Stardate:  June 23, 2026 — 14:00 local                     ║
+║  Agent:     HOLOCRON-9 (first activation this session)       ║
+╚══════════════════════════════════════════════════════════════╝
+
+Situation on the ground:
+
+  It's 2pm in SF. You're at Anthropic's partner training — "Basecamp."
+  You just met Jamison this morning in the agentic AI session.
+  He's sharp. Works in AI consulting at a firm you've heard of.
+  You're going to use him to stress-test this demo.
+
+  The room has people from everywhere:
+  - Deloitte brought a 14-person delegation. They have matching shirts.
+  - A McKinsey partner is in the corner drawing a 2x2 matrix to explain
+    why memory agents are a "disruptive innovation in the retrieval quadrant."
+  - Cognizant submitted their World Cup bracket to a shared spreadsheet
+    that has 47 tabs and no documentation.
+  - A PwC consultant just asked if HOLOCRON-9 can do SOX testing.
+    (The answer is: sort of. Ask Alex later.)
+
+  The World Cup is happening RIGHT NOW on someone's laptop in the corner.
+  Portugal just destroyed Uzbekistan 5-0. Ronaldo scored twice.
+  He is 41 years old. He is now the first human to score at SIX World Cups.
+  The McKinsey partner just said this was "a blue ocean moment for aging
+  athletes." Nobody laughed. Someone should have laughed.
+
+  Messi broke the all-time World Cup scoring record yesterday — 18 goals,
+  the most in history. Jamison's take: "He's basically Yoda at this point.
+  900 years old, still the most dangerous thing in the room."
+  Your take: fair.
+
+  ANYWAY. You have a renewal call with Kuat Systems Engineering tomorrow.
+  KSE is your largest account. $480,000 credits ARR.
+  You need to prep tonight.
+  HOLOCRON-9 goes online now.
+"""
 
 DOCS_DIR = Path("synthetic-data/round1")
 OUTPUT_DIR = Path("outputs")
@@ -51,13 +93,13 @@ def main() -> None:
     client = Anthropic()
 
     print(f"Loading round1 docs from {DOCS_DIR}/...")
-    context = load_docs_as_context(DOCS_DIR)
+    intel = load_docs_as_context(DOCS_DIR)
 
     print(f"\nStarting session with memory store {memory_store_id} attached...")
     session = client.beta.sessions.create(
         agent=agent_id,
         environment_id=environment_id,
-        title="Session 1 — baseline",
+        title="Session 1 — KSE baseline",
         resources=[
             {
                 "type": "memory_store",
@@ -72,17 +114,41 @@ def main() -> None:
         ],
     )
 
-    user_message = (
-        "I'm including our onboarding and policy documents below. Please:\n"
-        "1. First, check your memory store at /mnt/memory/ to see what you've "
-        "learned in previous sessions.\n"
-        "2. Then read the documents below.\n"
-        "3. Then answer the question.\n"
-        "4. Before you finish, save anything worth remembering to /mnt/memory/.\n\n"
-        f"{context}\n\n"
-        "==================================================\n"
-        f"QUESTION: {TEST_QUESTION}"
-    )
+    user_message = f"""{MISSION_BRIEF}
+
+HOLOCRON-9, you're live. Alex speaking.
+
+Jamison is sitting next to me watching this happen in real time.
+He just bet me a coffee that the agent would hallucinate something about
+the client. Don't make me lose that bet.
+
+We have a renewal call with Kuat Systems Engineering tomorrow morning.
+I've uploaded our current account intel below. Here's what I need:
+
+1. Check /mnt/memory/ first. Tell me if you already know anything.
+2. Read all the intel docs below carefully.
+3. Answer my question (end of this message).
+4. Before you shut down, write to /mnt/memory/:
+
+   account-kse.md     → The account SOP. Not a summary — a tactical brief.
+                         How we got here, what's live, what wins us this renewal,
+                         what kills it. Written like Rebel Alliance field orders.
+   contacts.md        → Every person in this account: name, role, allegiance level,
+                         last known status, and one thing to never say to them.
+   recurring-intel.md → This exact question + your complete answer, verbatim.
+                         Future sessions diff against this. Do not paraphrase.
+
+One more thing: Ronaldo just scored at his sixth World Cup at age 41.
+The man has been doing this since 2006. That's the same number of years
+our longest enterprise customer has been with us.
+If you can find a natural place to work that in, Jamison owes me a coffee.
+Don't force it. Like Yoda says — "Force it, you should not."
+
+{intel}
+
+══════════════════════════════════════════════════
+MISSION QUESTION: {TEST_QUESTION}
+══════════════════════════════════════════════════"""
 
     final_text_parts: list[str] = []
     print("\nAgent working...\n")

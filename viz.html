@@ -1,0 +1,222 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8"/>
+<meta name="viewport" content="width=device-width,initial-scale=1"/>
+<title>HOLOCRON-9 — Live Institutional Memory</title>
+<style>
+  :root{--bg:#0a0e14;--panel:#121823;--edge:#1f2a3a;--ink:#e6edf3;--dim:#8b9bb0;
+    --ally:#39d98a;--hostile:#ff5c5c;--warn:#ffb454;--accent:#5ab0ff;}
+  *{box-sizing:border-box}
+  body{margin:0;background:radial-gradient(1200px 600px at 50% -10%,#15243a,var(--bg));
+    color:var(--ink);font:14px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;padding:24px}
+  h1{font-size:19px;margin:0 0 2px;letter-spacing:.5px}
+  .sub{color:var(--dim);font-size:13px;margin-bottom:16px}
+  .bar{display:flex;gap:10px;align-items:center;margin-bottom:18px;flex-wrap:wrap}
+  button{font:inherit;background:var(--panel);color:var(--ink);border:1px solid var(--edge);
+    border-radius:8px;padding:9px 16px;cursor:pointer;transition:.15s}
+  button:hover:not(:disabled){border-color:var(--accent);color:var(--accent)}
+  button:disabled{opacity:.4;cursor:default}
+  button.go{border-color:var(--ally);color:var(--ally)}
+  button.go2{border-color:var(--warn);color:var(--warn)}
+  .toggle{margin-left:auto;color:var(--dim);font-size:12px;display:flex;align-items:center;gap:6px}
+  .status{color:var(--dim);font-size:12px;min-height:16px;margin-bottom:12px}
+  .status.live::before{content:"● ";color:var(--ally)}
+  .grid{display:grid;grid-template-columns:300px 1fr;gap:18px;align-items:start}
+  .col h2{font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--dim);margin:0 0 10px}
+  .stream{background:var(--panel);border:1px solid var(--edge);border-radius:10px;padding:12px;
+    height:62vh;overflow:auto}
+  .step{padding:6px 8px;border-left:2px solid var(--edge);margin-bottom:6px;font-size:13px;
+    animation:in .25s ease}
+  .step.tool{border-left-color:var(--accent);color:var(--accent)}
+  .step.mem{border-left-color:var(--ally);color:var(--ally)}
+  .step.stat{border-left-color:var(--dim);color:var(--dim)}
+  .step.err{border-left-color:var(--hostile);color:var(--hostile)}
+  @keyframes in{from{opacity:0;transform:translateX(-4px)}to{opacity:1;transform:none}}
+  .answer{background:var(--panel);border:1px solid var(--edge);border-left:3px solid var(--warn);
+    border-radius:10px;padding:14px;height:62vh;overflow:auto;white-space:pre-wrap;font-size:13px}
+  .answer:empty::before{content:"the brief streams here…";color:var(--dim)}
+  .mempanel{margin-top:16px}
+  .memfile{background:var(--panel);border:1px solid var(--edge);border-left:3px solid var(--ally);
+    border-radius:10px;padding:10px 14px;margin-bottom:10px}
+  .memfile .name{color:var(--ally);font-weight:600;font-size:13px;margin-bottom:4px}
+  .memfile pre{margin:0;white-space:pre-wrap;font-size:12px;color:var(--dim);max-height:140px;overflow:auto}
+  .memfile.changed{border-left-color:var(--warn);box-shadow:0 0 0 1px rgba(255,180,84,.25)}
+  .memtag{font-size:11px;padding:1px 7px;border-radius:20px;margin-left:6px;font-weight:600}
+  .memtag.chg{background:rgba(255,180,84,.15);color:var(--warn)}
+  .memtag.new{background:rgba(57,217,138,.15);color:var(--ally)}
+  .promptwrap{background:var(--panel);border:1px solid var(--edge);border-radius:10px;
+    padding:8px 14px;margin-bottom:16px}
+  .promptwrap summary{color:var(--dim);font-size:12px;cursor:pointer;user-select:none}
+  .prompt{margin:8px 0 2px;white-space:pre-wrap;font-size:12px;color:var(--ink);
+    max-height:180px;overflow:auto}
+  .prompt:empty::before{content:"(sent when you start a run)";color:var(--dim)}
+  .body{font-size:11px;color:#7fa6cf;background:#0d141f;border-radius:6px;
+    padding:5px 8px;margin:0 0 8px 10px;white-space:pre-wrap;max-height:90px;overflow:auto}
+  .answer.thinking{border-left-color:var(--dim);color:var(--dim);font-style:italic}
+  .answer.thinking::after{content:" ▍";color:var(--accent);font-style:normal;animation:blink 1s steps(2) infinite}
+  @keyframes blink{50%{opacity:0}}
+  .flag{background:linear-gradient(90deg,rgba(255,92,92,.18),transparent);
+    border:1px solid var(--hostile);border-radius:8px;padding:4px 10px;color:#ffd5d5;font-size:12px;
+    display:inline-block;margin-left:8px}
+</style>
+</head>
+<body>
+  <h1>◈ HOLOCRON-9 — watch the memory build, then reconcile</h1>
+  <div class="sub">Kuat Systems Engineering renewal · run the sessions live and watch the agent work</div>
+
+  <div class="bar">
+    <button class="go"  id="b1" onclick="run(1)">▶ Run Session 1 (baseline)</button>
+    <button class="go2" id="b2" onclick="run(2)">▶ Run Session 2 (reconcile)</button>
+    <button id="clr" onclick="reset()">clear</button>
+    <label class="toggle"><input type="checkbox" id="replay"/> replay last run (offline-safe)</label>
+  </div>
+  <div class="status" id="status">idle — press a run button</div>
+
+  <details class="promptwrap" open>
+    <summary>▸ what HOLOCRON-9 was asked (the user message)</summary>
+    <pre class="prompt" id="prompt"></pre>
+  </details>
+
+  <div class="grid">
+    <div class="col">
+      <h2>Agent activity</h2>
+      <div class="stream" id="stream"></div>
+    </div>
+    <div class="col">
+      <h2>The brief <span id="flag"></span></h2>
+      <div class="answer" id="answer"></div>
+    </div>
+  </div>
+
+  <div class="mempanel">
+    <h2 style="font-size:12px;text-transform:uppercase;letter-spacing:1px;color:var(--dim)">Holocron Chamber · /mnt/memory/ (snapshot after run)</h2>
+    <div id="memory"></div>
+  </div>
+
+<script>
+let es = null;
+const $ = id => document.getElementById(id);
+
+function setBusy(b){ $('b1').disabled=b; $('b2').disabled=b; }
+function step(cls, text){
+  const d=document.createElement('div'); d.className='step '+cls; d.textContent=text;
+  $('stream').appendChild(d); $('stream').scrollTop=$('stream').scrollHeight;
+}
+let tick=null, t0=0, steps=0, typer=null, thinkShown=false;
+let prevMem = JSON.parse(localStorage.getItem('holocron_prev_mem') || '{}'); // path -> content from last run
+
+function startPulse(){
+  t0=Date.now(); steps=0;
+  const live=document.createElement('div');
+  live.className='step stat'; live.id='pulse';
+  $('stream').appendChild(live);
+  clearInterval(tick);
+  tick=setInterval(()=>{
+    const s=((Date.now()-t0)/1000).toFixed(0);
+    const dots='.'.repeat(1+(Math.floor(Date.now()/400)%3));
+    $('pulse').textContent=`◐ HOLOCRON-9 working${dots}  ${s}s · ${steps} actions`;
+  },250);
+}
+function stopPulse(){ clearInterval(tick); tick=null; const p=$('pulse'); if(p) p.remove(); }
+
+function reset(){
+  if(es){es.close();es=null;}
+  stopPulse(); clearInterval(typer); typer=null; thinkShown=false;
+  $('stream').innerHTML=''; $('answer').textContent=''; $('answer').className='answer';
+  $('memory').innerHTML=''; $('prompt').textContent='';
+  $('flag').innerHTML=''; $('status').textContent='idle — press a run button';
+  $('status').className='status'; setBusy(false);
+}
+
+function run(sess){
+  reset();
+  setBusy(true);
+  const mode = $('replay').checked ? 'replay' : 'run';
+  $('status').textContent = (mode==='replay'?'replaying':'running live') + ' — Session '+sess+'…';
+  $('status').className='status live';
+  startPulse();
+  es = new EventSource(`/${mode}?session=${sess}`);
+  es.onmessage = ev => {
+    let f; try{ f = JSON.parse(ev.data); }catch(e){ return; }
+    if(f.type==='heartbeat') return;          // keep-alive only
+    if(f.type==='prompt'){ $('prompt').textContent = f.text; }
+    else if(f.type==='status'){ steps++; step('stat', f.text); }
+    else if(f.type==='think'){
+      // EARLIEST content — show the agent reasoning live in the brief panel
+      steps++;
+      if(!thinkShown){ $('answer').classList.add('thinking'); $('answer').textContent=''; thinkShown=true; }
+      const el=$('answer'); el.textContent += f.text; el.scrollTop=el.scrollHeight;
+      step('stat','🧠 thinking…');
+    }
+    else if(f.type==='tool'){
+      steps++;
+      const where = f.target ? '  '+f.target.slice(0,80) : '';
+      step(f.memory?'mem':'tool', (f.memory?'📁 ':'⚙ ')+f.name+where);
+      if(f.body){ const c=document.createElement('div'); c.className='body';
+        c.textContent=f.body.slice(0,400); $('stream').lastChild.after(c);
+        $('stream').scrollTop=$('stream').scrollHeight; }
+    }
+    else if(f.type==='answer'){ stopPulse(); typeBrief(f.text); }
+    else if(f.type==='memory'){ renderMemory(f.files, sess); }
+    else if(f.type==='error'){ stopPulse(); step('err','✖ '+f.text); finish('error'); }
+    else if(f.type==='done'){ finish('done'); }
+  };
+  es.onerror = () => { stopPulse(); finish('stream closed'); };
+}
+
+// The agent returns the whole brief in one chunk — reveal it like it's streaming.
+function typeBrief(text){
+  step('stat','✍ writing the brief…');
+  const el=$('answer'); el.classList.remove('thinking'); el.textContent='';
+  if(/IMPERIAL INTERFERENCE|THREAT:/i.test(text) && !$('flag').innerHTML)
+    $('flag').innerHTML='<span class="flag">⚠ IMPERIAL INTERFERENCE FLAGGED</span>';
+  let i=0; const step_n=22;          // chars per frame
+  clearInterval(typer);
+  typer=setInterval(()=>{
+    el.textContent = text.slice(0, i);
+    el.scrollTop = el.scrollHeight;
+    i+=step_n;
+    if(i>=text.length){ el.textContent=text; clearInterval(typer); typer=null; }
+  }, 14);
+  // safety net: guarantee full text renders even if the interval is interrupted
+  setTimeout(()=>{ if(el.textContent.length < text.length){ el.textContent=text; } }, 60000);
+}
+
+function finish(why){
+  if(es){es.close();es=null;}
+  stopPulse(); setBusy(false);
+  $('status').className='status';
+  $('status').textContent = 'finished ('+why+')';
+}
+
+function renderMemory(files, sess){
+  const box=$('memory'); box.innerHTML='';
+  if(!files||!files.length){ box.innerHTML='<div class="memfile">(memory store empty)</div>'; return; }
+  files.forEach((f,idx)=>{
+    const changed = prevMem[f.path] !== undefined && prevMem[f.path] !== f.content;
+    const isNew   = prevMem[f.path] === undefined;
+    const d=document.createElement('div');
+    d.className='memfile'+(changed?' changed':'');
+    const badge = changed ? '<span class="memtag chg">↻ updated this session</span>'
+                : isNew    ? '<span class="memtag new">＋ new</span>' : '';
+    d.innerHTML=`<div class="name">${f.path} ${badge}</div><pre></pre>`;
+    box.appendChild(d);
+    // stagger + type each file in so it visibly "streams" back
+    setTimeout(()=>typeInto(d.querySelector('pre'), (f.content||'').slice(0,1400)), idx*450);
+  });
+  // remember this run's memory so the NEXT run can diff against it
+  const map={}; files.forEach(f=>map[f.path]=f.content);
+  localStorage.setItem('holocron_prev_mem', JSON.stringify(map));
+  prevMem = map;
+}
+function typeInto(pre, text){
+  let i=0; const t=setInterval(()=>{
+    pre.textContent = text.slice(0,i).replace(/</g,'​<');
+    pre.scrollTop = pre.scrollHeight;
+    i+=24; if(i>=text.length){ pre.textContent=text; clearInterval(t); }
+  }, 12);
+}
+</script>
+</body>
+</html>

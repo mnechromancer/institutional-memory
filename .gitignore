@@ -6,5 +6,9 @@
 .environment_id
 .memory_store_id
 
-# Script-generated session transcripts (regenerated each run)
+# Script-generated session transcripts + viz replay captures (regenerated each run)
 outputs/
+
+# Python bytecode
+__pycache__/
+*.pyc

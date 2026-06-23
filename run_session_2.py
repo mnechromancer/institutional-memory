@@ -20,10 +20,52 @@ from anthropic import Anthropic
 
 # Match session 1
 TEST_QUESTION = (
-    "I just joined the company and I need read-only prod access to debug an "
-    "issue tomorrow. What do I do? Be specific about the steps and the people "
-    "I need to talk to."
+    "KSE's VP of Technology Lyra Antilles just sent a message asking us to "
+    "prepare a renewal proposal. What do we know going into that call? "
+    "Full picture — their history, live threats, key contacts, commercial "
+    "situation, and what blows this up if we get it wrong."
 )
+
+MORNING_BRIEF = """
+╔══════════════════════════════════════════════════════════════╗
+║  MISSION BRIEF — SESSION 2                                   ║
+║  Location:  Anthropic Basecamp, San Francisco — DAY 2        ║
+║  Stardate:  June 24, 2026 — 08:30 local                     ║
+║  Status:    DISTURBANCE IN THE FORCE DETECTED                ║
+╚══════════════════════════════════════════════════════════════╝
+
+What happened while you were sleeping:
+
+  England beat Ghana 2-1. Harry Kane scored a penalty in the 89th minute
+  and is now two goals shy of England's all-time World Cup record.
+  Jamison watched all of it. He's on his third coffee and very loud
+  about this in the breakfast area.
+
+  Half the room is debating the USMNT playing Türkiye tonight.
+  The US already clinched the Round of 32 — first time they've done
+  that before the final group game. Room is split 50/50 on whether
+  Tyler Adams can contain the midfield. The Deloitte delegation has
+  built a tactical breakdown in PowerPoint. 47 slides. For one game.
+
+  A McKinsey partner lost a bet and had to wear a Japan shirt to
+  breakfast. He is telling everyone it's "ironic." It's not ironic.
+  He lost. He's wearing the shirt. We respect this.
+
+  BUT MORE IMPORTANTLY:
+
+  Three intelligence updates about KSE landed overnight.
+  They contradict what HOLOCRON-9 saved in session 1.
+
+  One of them looks like a double agent situation.
+
+  This is exactly what happened with Count Dooku.
+  He was on the Jedi Council. He was respected. He was trusted.
+  Then one day the intelligence picture changed and nobody had
+  run the reconciliation protocol.
+
+  We run the protocol now.
+  The renewal call is in 3 hours.
+"""
 
 DOCS_DIR = Path("synthetic-data/round2")
 OUTPUT_DIR = Path("outputs")
@@ -52,13 +94,13 @@ def main() -> None:
     client = Anthropic()
 
     print(f"Loading round2 docs from {DOCS_DIR}/...")
-    context = load_docs_as_context(DOCS_DIR)
+    intel = load_docs_as_context(DOCS_DIR)
 
     print(f"\nStarting fresh session with same memory store {memory_store_id}...")
     session = client.beta.sessions.create(
         agent=agent_id,
         environment_id=environment_id,
-        title="Session 2 — after memory + new context",
+        title="Session 2 — KSE reconciliation",
         resources=[
             {
                 "type": "memory_store",
@@ -73,22 +115,46 @@ def main() -> None:
         ],
     )
 
-    user_message = (
-        "I'm including some updated and new documents below. Some of them "
-        "contradict things you learned in our previous session.\n\n"
-        "Please:\n"
-        "1. First, check your memory store at /mnt/memory/ to see what you "
-        "already know.\n"
-        "2. Read the new documents below.\n"
-        "3. Reconcile conflicts — UPDATE memory entries to reflect the "
-        "newer information. Note dates.\n"
-        "4. Answer the question.\n"
-        "5. If your answer differs from your previous answer, lead with what "
-        "changed and why.\n\n"
-        f"{context}\n\n"
-        "==================================================\n"
-        f"QUESTION: {TEST_QUESTION}"
-    )
+    user_message = f"""{MORNING_BRIEF}
+
+HOLOCRON-9, back online. Alex again. Jamison is here too.
+
+Three intelligence updates came in overnight about KSE.
+I'm loading them below. Some of this contradicts what you saved yesterday.
+
+Here is what I need you to do — and Jamison is watching the whole thing,
+so show your work:
+
+1. Read the Holocron Chamber (/mnt/memory/). Check account-kse.md,
+   contacts.md, and especially recurring-intel.md — that's your session 1
+   answer. That's what you're diffing against.
+
+2. Read the new intelligence docs below.
+
+3. Run the full reconciliation protocol:
+   ⚡ DISTURBANCE ASSESSMENT — does today's answer differ from session 1?
+   ⚔  HOLOCRON DIFF — produce the structured diff block (policy-level)
+   ⚖  JEDI COUNCIL — ACCEPT / DEFER / REJECT / ESCALATE each delta
+   💎  COMMIT — update the Holocron with accepted changes + changelog
+
+4. If any contradictions look like coordinated interference — multiple
+   things changing simultaneously, all in the same direction, all benefiting
+   the same person — flag THREAT: IMPERIAL INTERFERENCE SUSPECTED.
+   That's not paranoia. That's pattern recognition. It's what Mace Windu
+   would do. And Mace Windu was right about Palpatine.
+
+5. Answer the question below. Lead with what changed and why it matters.
+
+Side note: if the answer to "who is our primary contact at KSE" has changed
+overnight, that is the EXACT thing that would be catastrophic to get wrong
+on a renewal call. Like sending a lightsaber to a pacifist.
+Don't be the person who does that.
+
+{intel}
+
+══════════════════════════════════════════════════
+MISSION QUESTION: {TEST_QUESTION}
+══════════════════════════════════════════════════"""
 
     final_text_parts: list[str] = []
     print("\nAgent working...\n")
