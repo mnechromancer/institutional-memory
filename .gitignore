@@ -1,0 +1,10 @@
+# Secrets
+.env
+
+# Script-generated cloud resource IDs (per-account; created by create_agent.py)
+.agent_id
+.environment_id
+.memory_store_id
+
+# Script-generated session transcripts (regenerated each run)
+outputs/
