@@ -23,6 +23,7 @@ Endpoints:
 
 import json
 import os
+import sys
 import threading
 import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -70,7 +71,7 @@ SESSIONS = {
 def load_intel(docs_dir: Path) -> str:
     blocks = []
     for path in sorted(docs_dir.glob("*.md")):
-        blocks.append(f"=====  DOCUMENT: {path.name}  =====\n{path.read_text()}")
+        blocks.append(f"=====  DOCUMENT: {path.name}  =====\n{path.read_text(encoding='utf-8')}")
     return "\n\n".join(blocks)
 
 
@@ -210,19 +211,26 @@ class Handler(BaseHTTPRequestHandler):
                              "content": [{"type": "text", "text": user_message}]}],
                 )
                 for event in stream:
-                    if event.type == "agent.thinking":
-                        # earliest signal — stream the agent's reasoning live
+                    et = event.type
+                    # --- session/thread lifecycle: show the agent coming online
+                    if et in ("session.status_running", "session.thread_status_running"):
+                        self._emit({"type": "status", "text": "session online — HOLOCRON-9 booting"}, record)
+                    # --- each model call: the #1 source of "dead air". Mark every
+                    #     request so the stream never freezes while Claude reasons.
+                    elif et == "span.model_request_start":
+                        self._emit({"type": "status", "text": "◇ querying Claude…"}, record)
+                    elif et == "agent.thinking":
+                        # extended-thinking text arrives here when present; in this
+                        # SDK it's often empty, so always emit a reasoning marker.
                         txt = ""
                         for block in getattr(event, "content", []) or []:
-                            if getattr(block, "type", None) == "thinking":
-                                txt += getattr(block, "thinking", "") or ""
-                        if txt:
-                            self._emit({"type": "think", "text": txt}, record)
-                    elif event.type == "agent.message":
+                            txt += (getattr(block, "thinking", None) or getattr(block, "text", None) or "")
+                        self._emit({"type": "think", "text": txt}, record)
+                    elif et == "agent.message":
                         for block in event.content:
                             if getattr(block, "type", None) == "text":
                                 self._emit({"type": "answer", "text": block.text}, record)
-                    elif event.type == "agent.tool_use":
+                    elif et == "agent.tool_use":
                         name = getattr(event, "name", "?")
                         inp = getattr(event, "input", {}) or {}
                         target = inp.get("path") or inp.get("file_path") or inp.get("command") or ""
@@ -232,7 +240,14 @@ class Handler(BaseHTTPRequestHandler):
                                     "target": str(target),
                                     "body": str(body)[:1200],
                                     "memory": "/mnt/memory" in str(target)}, record)
-                    elif event.type == "session.status_idle":
+                    elif et == "agent.tool_result":
+                        # show what the tool returned — esp. ls /mnt/memory and writes
+                        txt = ""
+                        for block in getattr(event, "content", []) or []:
+                            if getattr(block, "type", None) == "text":
+                                txt += getattr(block, "text", "") or ""
+                        self._emit({"type": "tool_result", "text": str(txt)[:600]}, record)
+                    elif et == "session.status_idle":
                         stop_hb.set()
                         self._emit({"type": "status", "text": "reading back the Holocron…"}, record)
                         snap = memory_snapshot(client, store_id)
@@ -261,7 +276,7 @@ class Handler(BaseHTTPRequestHandler):
         if not path.exists():
             self.wfile.write(sse({"type": "error", "text": "No saved run to replay."}))
             return
-        frames = json.loads(path.read_text())
+        frames = json.loads(path.read_text(encoding="utf-8"))
         for frame in frames:
             try:
                 self.wfile.write(sse(frame)); self.wfile.flush()
@@ -272,13 +287,19 @@ class Handler(BaseHTTPRequestHandler):
 
 
 def main():
+    # Windows consoles default to cp1252, which can't encode the unicode in our
+    # status lines — that crashes the server on startup. Force UTF-8 stdout.
+    try:
+        sys.stdout.reconfigure(encoding="utf-8")
+    except Exception:
+        pass
     if not os.environ.get("ANTHROPIC_API_KEY"):
         raise SystemExit("Set ANTHROPIC_API_KEY before running (see serve.sh).")
     # neutralize the local intercepting proxy that breaks Python TLS
     for var in ("HTTPS_PROXY", "HTTP_PROXY", "ALL_PROXY", "https_proxy", "http_proxy"):
         os.environ.pop(var, None)
     os.environ["NO_PROXY"] = "*"
-    print(f"HOLOCRON-9 viz server → http://localhost:{PORT}")
+    print(f"HOLOCRON-9 viz server -> http://localhost:{PORT}")
     ThreadingHTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
 
 

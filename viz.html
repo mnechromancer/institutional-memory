@@ -103,7 +103,7 @@ function step(cls, text){
   const d=document.createElement('div'); d.className='step '+cls; d.textContent=text;
   $('stream').appendChild(d); $('stream').scrollTop=$('stream').scrollHeight;
 }
-let tick=null, t0=0, steps=0, typer=null, thinkShown=false;
+let tick=null, t0=0, steps=0, typer=null, thinkShown=false, briefShown=false;
 let prevMem = JSON.parse(localStorage.getItem('holocron_prev_mem') || '{}'); // path -> content from last run
 
 function startPulse(){
@@ -122,7 +122,7 @@ function stopPulse(){ clearInterval(tick); tick=null; const p=$('pulse'); if(p) 
 
 function reset(){
   if(es){es.close();es=null;}
-  stopPulse(); clearInterval(typer); typer=null; thinkShown=false;
+  stopPulse(); clearInterval(typer); typer=null; thinkShown=false; briefShown=false;
   $('stream').innerHTML=''; $('answer').textContent=''; $('answer').className='answer';
   $('memory').innerHTML=''; $('prompt').textContent='';
   $('flag').innerHTML=''; $('status').textContent='idle — press a run button';
@@ -143,11 +143,11 @@ function run(sess){
     if(f.type==='prompt'){ $('prompt').textContent = f.text; }
     else if(f.type==='status'){ steps++; step('stat', f.text); }
     else if(f.type==='think'){
-      // EARLIEST content — show the agent reasoning live in the brief panel
+      // reasoning marker in the activity stream (thinking text is often empty
+      // in this SDK, so we don't pipe it into the brief panel any more)
       steps++;
-      if(!thinkShown){ $('answer').classList.add('thinking'); $('answer').textContent=''; thinkShown=true; }
-      const el=$('answer'); el.textContent += f.text; el.scrollTop=el.scrollHeight;
-      step('stat','🧠 thinking…');
+      const tail = f.text ? ': '+f.text.slice(0,80) : '';
+      step('stat','🧠 reasoning…'+tail);
     }
     else if(f.type==='tool'){
       steps++;
@@ -157,7 +157,13 @@ function run(sess){
         c.textContent=f.body.slice(0,400); $('stream').lastChild.after(c);
         $('stream').scrollTop=$('stream').scrollHeight; }
     }
-    else if(f.type==='answer'){ stopPulse(); typeBrief(f.text); }
+    else if(f.type==='tool_result'){
+      // show what the tool returned, attached under the last step
+      if(f.text){ const c=document.createElement('div'); c.className='body';
+        c.textContent='↳ '+f.text.slice(0,400); $('stream').lastChild.after(c);
+        $('stream').scrollTop=$('stream').scrollHeight; }
+    }
+    else if(f.type==='answer'){ stopPulse(); appendBrief(f.text); }
     else if(f.type==='memory'){ renderMemory(f.files, sess); }
     else if(f.type==='error'){ stopPulse(); step('err','✖ '+f.text); finish('error'); }
     else if(f.type==='done'){ finish('done'); }
@@ -165,22 +171,25 @@ function run(sess){
   es.onerror = () => { stopPulse(); finish('stream closed'); };
 }
 
-// The agent returns the whole brief in one chunk — reveal it like it's streaming.
-function typeBrief(text){
-  step('stat','✍ writing the brief…');
-  const el=$('answer'); el.classList.remove('thinking'); el.textContent='';
+// The brief can arrive as one chunk OR several agent.message events. APPEND each
+// chunk (don't overwrite) so a multi-message brief isn't truncated, and reveal
+// each new chunk like it's streaming in.
+function appendBrief(text){
+  const el=$('answer'); el.classList.remove('thinking');
+  if(!briefShown){ el.textContent=''; briefShown=true; step('stat','✍ writing the brief…'); }
+  const base = briefShown && el.textContent ? el.textContent + '\n\n' : '';
   if(/IMPERIAL INTERFERENCE|THREAT:/i.test(text) && !$('flag').innerHTML)
     $('flag').innerHTML='<span class="flag">⚠ IMPERIAL INTERFERENCE FLAGGED</span>';
   let i=0; const step_n=22;          // chars per frame
   clearInterval(typer);
   typer=setInterval(()=>{
-    el.textContent = text.slice(0, i);
+    el.textContent = base + text.slice(0, i);
     el.scrollTop = el.scrollHeight;
     i+=step_n;
-    if(i>=text.length){ el.textContent=text; clearInterval(typer); typer=null; }
+    if(i>=text.length){ el.textContent=base+text; clearInterval(typer); typer=null; }
   }, 14);
   // safety net: guarantee full text renders even if the interval is interrupted
-  setTimeout(()=>{ if(el.textContent.length < text.length){ el.textContent=text; } }, 60000);
+  setTimeout(()=>{ if(el.textContent.length < (base+text).length){ el.textContent=base+text; } }, 60000);
 }
 
 function finish(why){

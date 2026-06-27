@@ -12,3 +12,6 @@ outputs/
 # Python bytecode
 __pycache__/
 *.pyc
+
+# Local virtualenv (created during debugging)
+.venv/
