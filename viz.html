@@ -7,7 +7,11 @@
 <style>
   :root{--bg:#0a0e14;--panel:#121823;--edge:#1f2a3a;--ink:#e6edf3;--dim:#8b9bb0;
     --ally:#39d98a;--hostile:#ff5c5c;--warn:#ffb454;--accent:#5ab0ff;}
-  *{box-sizing:border-box}
+  *{box-sizing:border-box;scrollbar-width:thin;scrollbar-color:var(--edge) transparent}
+  ::-webkit-scrollbar{width:6px;height:6px}
+  ::-webkit-scrollbar-track{background:transparent}
+  ::-webkit-scrollbar-thumb{background:var(--edge);border-radius:3px}
+  ::-webkit-scrollbar-thumb:hover{background:var(--dim)}
   body{margin:0;background:radial-gradient(1200px 600px at 50% -10%,#15243a,var(--bg));
     color:var(--ink);font:14px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace;padding:24px}
 
