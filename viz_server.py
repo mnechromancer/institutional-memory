@@ -141,6 +141,10 @@ class Handler(BaseHTTPRequestHandler):
             return self._run_live(sess)
         if parsed.path == "/replay":
             return self._replay(sess)
+        if parsed.path == "/ask":
+            return self._ask_question((qs.get("q") or [""])[0])
+        if parsed.path.startswith("/replays/"):
+            return self._serve_replay_file(parsed.path)
         self.send_response(404)
         self.end_headers()
 
@@ -284,6 +288,60 @@ class Handler(BaseHTTPRequestHandler):
                 return
             # answer text streams fast, structural frames pause for effect
             time.sleep(0.02 if frame.get("type") == "answer" else 0.4)
+
+
+    def _serve_replay_file(self, path):
+        """Serve replays/ JSON files locally so static replay works the same as on Pages."""
+        fname = path[len("/replays/"):]
+        if "/" in fname or ".." in fname:
+            self.send_response(403); self.end_headers(); return
+        fpath = ROOT / "replays" / fname
+        if not fpath.exists() or fpath.suffix != ".json":
+            self.send_response(404); self.end_headers(); return
+        body = fpath.read_bytes()
+        self.send_response(200)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(body)))
+        self.end_headers()
+        self.wfile.write(body)
+
+    def _ask_question(self, question):
+        """Answer a question about the current memory store using Haiku."""
+        if not question.strip():
+            body = b'{"error":"empty question"}'
+            self.send_response(400)
+            self.send_header("Content-Type", "application/json"); self.send_header("Content-Length", str(len(body)))
+            self.end_headers(); self.wfile.write(body); return
+        try:
+            store_id = (ROOT / ".memory_store_id").read_text().strip()
+            client = Anthropic()
+            files = memory_snapshot(client, store_id)
+            context = "\n\n".join(
+                f"=== {f['path']} ===\n{f['content']}" for f in files
+            ) if files else "(memory store is empty — no sessions run yet)"
+            msg = client.messages.create(
+                model="claude-haiku-4-5-20251001",
+                max_tokens=512,
+                system=(
+                    "You are HOLOCRON-9, a Star Wars-themed AI account assistant for "
+                    "Kuat Systems Engineering. Answer based only on the memory store below. "
+                    "Be concise and direct. If the answer isn't in memory, say so.\n\n"
+                    "MEMORY STORE:\n" + context
+                ),
+                messages=[{"role": "user", "content": question}],
+            )
+            answer = msg.content[0].text if msg.content else "(no response)"
+            body = json.dumps({"answer": answer}, ensure_ascii=False).encode("utf-8")
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers(); self.wfile.write(body)
+        except Exception as e:
+            body = json.dumps({"error": f"{type(e).__name__}: {e}"}).encode("utf-8")
+            self.send_response(500)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers(); self.wfile.write(body)
 
 
 def main():
