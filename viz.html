@@ -59,6 +59,14 @@
   .flag{background:linear-gradient(90deg,rgba(255,92,92,.18),transparent);
     border:1px solid var(--hostile);border-radius:8px;padding:4px 10px;color:#ffd5d5;font-size:12px;
     display:inline-block;margin-left:8px}
+  .hud{display:flex;flex-wrap:wrap;gap:22px;align-items:center;background:var(--panel);
+    border:1px solid var(--edge);border-radius:10px;padding:10px 16px;margin-bottom:16px}
+  .hud .si{display:flex;flex-direction:column;gap:2px;min-width:64px}
+  .hud .si .k{color:var(--dim);text-transform:uppercase;letter-spacing:1px;font-size:10px}
+  .hud .si .v{color:var(--ink);font-size:15px;font-variant-numeric:tabular-nums}
+  .hud .si.credits .v{color:var(--warn)}
+  .hud .est{color:var(--accent);font-size:9px;letter-spacing:.5px;
+    border:1px solid var(--edge);border-radius:4px;padding:0 3px;margin-left:4px}
 </style>
 </head>
 <body>
@@ -72,6 +80,14 @@
     <label class="toggle"><input type="checkbox" id="replay" checked/> replay (uncheck for live &mdash; needs local presenter server)</label>
   </div>
   <div class="status" id="status">idle — press a run button</div>
+
+  <div class="hud" id="hud">
+    <div class="si"><span class="k">Model</span><span class="v" id="h-model">claude-sonnet-4-6</span></div>
+    <div class="si"><span class="k">Elapsed</span><span class="v" id="h-elapsed">0.0s</span></div>
+    <div class="si"><span class="k">Tool calls</span><span class="v" id="h-tools">0</span></div>
+    <div class="si"><span class="k">Tokens <span class="est" id="h-tok-tag">EST</span></span><span class="v" id="h-tokens">0</span></div>
+    <div class="si credits"><span class="k">Credits expended <span class="est" id="h-cost-tag">EST</span></span><span class="v" id="h-cost">$0.0000</span></div>
+  </div>
 
   <details class="promptwrap" open>
     <summary>▸ what HOLOCRON-9 was asked (the user message)</summary>
@@ -97,6 +113,37 @@
 <script>
 let es = null;
 const $ = id => document.getElementById(id);
+
+// --- session cost HUD ---------------------------------------------------
+// claude-sonnet-4-6 pricing, USD per 1M tokens. Source: Anthropic pricing /
+// claude-api skill (input 3 / output 15 / cache-write 5m 1.25x / cache-read 0.1x).
+const PRICE = { in:3.00, out:15.00, cacheWrite:3.75, cacheRead:0.30 };
+const CHARS_PER_TOKEN = 4;          // rough heuristic for the EST fallback
+// Estimate from replay text until a real {type:"usage"} frame supplies counts.
+let hud = { tools:0, inChars:0, outChars:0, real:null };
+let hudTimer = null, hudT0 = 0;
+
+function computeCost(inTok, outTok, cw=0, cr=0){
+  return inTok/1e6*PRICE.in + outTok/1e6*PRICE.out
+       + cw/1e6*PRICE.cacheWrite + cr/1e6*PRICE.cacheRead;
+}
+function renderHud(){
+  $('h-tools').textContent = hud.tools;
+  let inTok, outTok, cw=0, cr=0, est=true;
+  if(hud.real){ inTok=hud.real.inTok; outTok=hud.real.outTok;
+    cw=hud.real.cacheWrite; cr=hud.real.cacheRead; est=false; }
+  else { inTok=Math.round(hud.inChars/CHARS_PER_TOKEN);
+         outTok=Math.round(hud.outChars/CHARS_PER_TOKEN); }
+  $('h-tokens').textContent = (inTok+outTok+cw+cr).toLocaleString();
+  $('h-cost').textContent = '$'+computeCost(inTok,outTok,cw,cr).toFixed(4);
+  $('h-tok-tag').style.display = est?'':'none';
+  $('h-cost-tag').style.display = est?'':'none';
+}
+function startHudTimer(){ hudT0=Date.now(); clearInterval(hudTimer);
+  hudTimer=setInterval(()=>{ $('h-elapsed').textContent=((Date.now()-hudT0)/1000).toFixed(1)+'s'; }, 100); }
+function stopHudTimer(){ clearInterval(hudTimer); hudTimer=null; }
+function resetHud(){ hud={tools:0,inChars:0,outChars:0,real:null}; stopHudTimer();
+  $('h-elapsed').textContent='0.0s'; renderHud(); }
 
 function setBusy(b){ $('b1').disabled=b; $('b2').disabled=b; }
 function step(cls, text){
@@ -127,14 +174,15 @@ function reset(){
   $('stream').innerHTML=''; $('answer').textContent=''; $('answer').className='answer';
   $('memory').innerHTML=''; $('prompt').textContent='';
   $('flag').innerHTML=''; $('status').textContent='idle — press a run button';
-  $('status').className='status'; setBusy(false);
+  $('status').className='status'; setBusy(false); resetHud();
 }
 
 // Render one frame. Shared by the live EventSource stream and the static
 // (GitHub Pages) replay so behaviour is identical in both modes.
 function handleFrame(f, sess){
   if(f.type==='heartbeat') return;          // keep-alive only
-  if(f.type==='prompt'){ $('prompt').textContent = f.text; }
+  if(f.type==='prompt'){ $('prompt').textContent = f.text;
+    hud.inChars += (f.text||'').length; renderHud(); }
   else if(f.type==='status'){ steps++; step('stat', f.text); }
   else if(f.type==='think'){
     // reasoning marker in the activity stream (thinking text is often empty
@@ -142,6 +190,7 @@ function handleFrame(f, sess){
     steps++;
     const tail = f.text ? ': '+f.text.slice(0,80) : '';
     step('stat','🧠 reasoning…'+tail);
+    hud.outChars += (f.text||'').length; renderHud();
   }
   else if(f.type==='tool'){
     steps++;
@@ -150,14 +199,27 @@ function handleFrame(f, sess){
     if(f.body){ const c=document.createElement('div'); c.className='body';
       c.textContent=f.body.slice(0,400); $('stream').lastChild.after(c);
       $('stream').scrollTop=$('stream').scrollHeight; }
+    hud.tools++;
+    hud.outChars += ((f.body||'').length+(f.name||'').length+(f.target||'').length);
+    renderHud();
   }
   else if(f.type==='tool_result'){
     // show what the tool returned, attached under the last step
     if(f.text){ const c=document.createElement('div'); c.className='body';
       c.textContent='↳ '+f.text.slice(0,400); $('stream').lastChild.after(c);
       $('stream').scrollTop=$('stream').scrollHeight; }
+    hud.inChars += (f.text||'').length; renderHud();
   }
-  else if(f.type==='answer'){ stopPulse(); appendBrief(f.text); }
+  else if(f.type==='answer'){ stopPulse(); appendBrief(f.text);
+    hud.outChars += (f.text||'').length; renderHud(); }
+  // Real token usage (future live path): server emits one per model request.
+  // Accumulates and flips the HUD from EST → exact. Counts: input/output/cache.
+  else if(f.type==='usage'){
+    hud.real = hud.real || {inTok:0,outTok:0,cacheWrite:0,cacheRead:0};
+    hud.real.inTok += f.input||0; hud.real.outTok += f.output||0;
+    hud.real.cacheWrite += f.cache_write||0; hud.real.cacheRead += f.cache_read||0;
+    renderHud();
+  }
   else if(f.type==='memory'){ renderMemory(f.files, sess); }
   else if(f.type==='error'){ stopPulse(); step('err','✖ '+f.text); finish('error'); }
   else if(f.type==='done'){ finish('done'); }
@@ -187,7 +249,7 @@ function run(sess){
   const replayMode = $('replay').checked;
   $('status').textContent = (replayMode?'replaying':'running live') + ' — Session '+sess+'…';
   $('status').className='status live';
-  startPulse();
+  startPulse(); startHudTimer();
   if(replayMode){ replayCancel=false; replayStatic(sess); return; }
   es = new EventSource(`/run?session=${sess}`);
   es.onmessage = ev => { let f; try{ f = JSON.parse(ev.data); }catch(e){ return; } handleFrame(f, sess); };
@@ -217,7 +279,7 @@ function appendBrief(text){
 
 function finish(why){
   if(es){es.close();es=null;}
-  stopPulse(); setBusy(false);
+  stopPulse(); stopHudTimer(); setBusy(false);
   $('status').className='status';
   $('status').textContent = 'finished ('+why+')';
 }
