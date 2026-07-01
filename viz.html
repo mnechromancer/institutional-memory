@@ -166,6 +166,28 @@
   </div>
 </div>
 
+<!-- Live consent + key modal -->
+<div class="modal-overlay" id="live-consent-modal" onclick="handleLiveModalClick(event)">
+  <div class="modal-box">
+    <button class="modal-close" onclick="cancelLiveConsent()">✕</button>
+    <h2>⚠ Running HOLOCRON-9 live</h2>
+    <p>This is different from a typical live chat demo. Clicking <strong>run live</strong> uses <em>your</em> Anthropic API key, server-side, to:</p>
+    <ul>
+      <li>Provision a real <strong>agent</strong>, <strong>environment</strong>, and <strong>memory store</strong> in <em>your own</em> Anthropic workspace — not ours.</li>
+      <li>Run <strong>two full live agent sessions</strong> against those resources (baseline, then reconcile) — real reasoning, real tool calls, real cost on your key. This is slower and pricier than a single-call demo.</li>
+      <li>Best-effort clean the environment and memory store up afterward. The agent record can only be archived, not deleted, by this API, so it persists harmlessly in your workspace. If cleanup ever fails, everything is visible and manageable at <code>platform.claude.com</code> under your own account.</li>
+    </ul>
+    <p>Your key is sent directly to our relay over HTTPS for this request only — never stored, never logged, cleared when you leave this page.</p>
+    <label style="display:block;margin:14px 0 6px;font-size:12px;color:var(--dim)">Your Anthropic API key</label>
+    <input type="password" id="live-key-input" placeholder="sk-ant-…" autocomplete="off" spellcheck="false"
+      style="width:100%;box-sizing:border-box;font:13px ui-monospace,monospace;background:var(--bg);border:1px solid var(--edge);border-radius:8px;color:var(--ink);padding:9px 12px;outline:none">
+    <div style="display:flex;gap:10px;margin-top:16px">
+      <button onclick="cancelLiveConsent()">cancel</button>
+      <button onclick="confirmLiveConsent()" style="border-color:var(--warn);color:var(--warn)">I understand — run live</button>
+    </div>
+  </div>
+</div>
+
 <!-- Header -->
 <div class="header-row">
   <h1>◈ HOLOCRON-9 — watch the memory build, then reconcile</h1>
@@ -240,12 +262,20 @@
 </div>
 
 <script>
-let es = null;
+const HOLOCRON_LIVE_URL = 'https://jamisonducey.com/api/holocron-live';
 let replayGen = 0;          // incremented on every new run to cancel in-flight replays
 let activeSession = null;
 let liveMode = false;
 const ranSessions = {1:false, 2:false};
 const $ = id => document.getElementById(id);
+
+// Live-only state. The key lives in this closure var only — never
+// localStorage/cookies — and is cleared on pagehide, same key-hygiene
+// convention as the starwars-viz-kit BYOK demos.
+let liveKey = null;
+let liveIds = null;          // {agentId, environmentId, memoryStoreId} from session 1's provision
+let pendingLiveSess = null;
+let cleanedUp = false;
 
 // claude-sonnet-4-6 pricing, USD per 1M tokens
 const PRICE = {in:3.00, out:15.00, cacheWrite:3.75, cacheRead:0.30};
@@ -303,6 +333,21 @@ function setMode(m){
   if(liveMode){pill.style.left=(3+ro.offsetWidth)+'px';ro.classList.remove('active');lo.classList.add('active');}
   else{pill.style.left='3px';ro.classList.add('active');lo.classList.remove('active');}
   updateQaPanel();
+  updateSession2Availability();
+}
+
+// "Run Session 2" requires session 1's live provisioning to have completed
+// first — running it alone would provision nothing and hang, or silently
+// start a second, unrelated empty store. Replay mode is unaffected.
+function updateSession2Availability(){
+  const b2=$('b2');
+  if(liveMode && !liveIds && !ranSessions[2]){
+    b2.disabled=true;
+    b2.title='Run Session 1 live first — Session 2 reuses its provisioned memory store.';
+  } else {
+    b2.disabled=false;
+    b2.title='';
+  }
 }
 
 // help modal
@@ -310,8 +355,11 @@ function showHelp(){$('help-modal').classList.add('open');}
 function closeHelp(){$('help-modal').classList.remove('open');}
 function handleModalClick(e){if(e.target===$('help-modal'))closeHelp();}
 
-// Q&A panel (live + session 2 done)
-function updateQaPanel(){$('qa-panel').style.display=(liveMode&&ranSessions[2])?'block':'none';}
+// Q&A panel — depends on a local-only /ask endpoint (Haiku over the memory
+// store) that isn't part of the public live relay. Out of scope for the
+// portfolio-relay live mode; keep it hidden rather than show a feature that
+// will 404 for a visitor who just paid for two live sessions.
+function updateQaPanel(){$('qa-panel').style.display='none';}
 async function submitQuestion(){
   const q=$('qa-input').value.trim(); if(!q) return;
   const btn=$('qa-btn'),ans=$('qa-answer');
@@ -352,7 +400,6 @@ function step(cls,text){
 }
 
 function reset(){
-  if(es){es.onerror=null;es.close();es=null;}
   replayGen++;
   stopPulse(); clearInterval(typer); typer=null; briefShown=false;
   if(activeSession) stopHudTimer(activeSession);
@@ -365,6 +412,7 @@ function reset(){
   $('b1').textContent='▶ Run Session 1 (baseline)';
   $('b2').textContent='▶ Run Session 2 (reconcile)';
   activeSession=null; updateQaPanel();
+  updateSession2Availability();
 }
 
 // Render one frame — shared by live SSE and static replay
@@ -433,9 +481,18 @@ async function replayStatic(sess,gen){
 }
 
 function run(sess){
-  // Stop any in-flight session without triggering finish() for the OLD session
-  if(es){es.onerror=null;es.close();es=null;}
-  replayGen++; // cancel any async replay loop
+  if(liveMode){
+    if(sess===2 && !liveIds) return; // button should already be disabled — defense in depth
+    if(!liveKey){ showLiveConsent(sess); return; }
+    beginRun(sess, true);
+    return;
+  }
+  beginRun(sess, false);
+}
+
+// Shared setup for both live and replay runs — reset the UI, then branch.
+function beginRun(sess, live){
+  replayGen++; // cancel any in-flight replay loop or live frame handler
   const gen=replayGen;
   stopPulse();
   if(activeSession) stopHudTimer(activeSession);
@@ -445,15 +502,121 @@ function run(sess){
   $('memory').innerHTML=''; $('flag').innerHTML=''; $('prompt').textContent='';
   resetSessionHud(sess);
   activeSession=sess;
-  $('status').textContent=(liveMode?'running live':'replaying')+' — Session '+sess+'…';
+  $('status').textContent=(live?'running live':'replaying')+' — Session '+sess+'…';
   $('status').className='status live';
   setAllBusy(true);
   startPulse(); startHudTimer(sess);
-  if(!liveMode){replayStatic(sess,gen);return;}
-  es=new EventSource(`/run?session=${sess}`);
-  es.onmessage=ev=>{let f;try{f=JSON.parse(ev.data);}catch(e){return;}handleFrame(f,sess);};
-  es.onerror=()=>{stopPulse();finish('stream closed');};
+  if(!live){ replayStatic(sess,gen); return; }
+  if(sess===1){
+    // Fresh ephemeral provisioning starts with an empty store — don't diff
+    // against memory left over from a previous replay or live arc.
+    prevMem = {};
+    liveIds = null;
+    cleanedUp = false;
+    updateSession2Availability();
+  }
+  runLiveSession(sess, gen);
 }
+
+// ── live consent + key modal ────────────────────────────────────────────────
+function showLiveConsent(sess){
+  pendingLiveSess = sess;
+  $('live-key-input').value = liveKey || '';
+  $('live-consent-modal').classList.add('open');
+}
+function cancelLiveConsent(){
+  $('live-consent-modal').classList.remove('open');
+  pendingLiveSess = null;
+}
+function handleLiveModalClick(e){ if(e.target===$('live-consent-modal')) cancelLiveConsent(); }
+function confirmLiveConsent(){
+  const key=$('live-key-input').value.trim();
+  if(!key) return;
+  liveKey=key;
+  $('live-consent-modal').classList.remove('open');
+  const sess=pendingLiveSess; pendingLiveSess=null;
+  if(sess) beginRun(sess, true);
+}
+
+// ── live transport: fetch + streamed-body reader (EventSource can't carry a
+// custom header, so it can't carry the visitor's key) ──────────────────────
+async function runLiveSession(sess, gen){
+  const payload={action: sess===1?'run_session1':'run_session2'};
+  if(sess===2 && liveIds) Object.assign(payload, liveIds);
+  let res;
+  try{
+    res=await fetch(HOLOCRON_LIVE_URL,{
+      method:'POST',
+      headers:{'Content-Type':'application/json','X-Anthropic-Key':liveKey},
+      body:JSON.stringify(payload)
+    });
+  }catch(e){
+    if(replayGen!==gen) return;
+    stopPulse(); step('err','✖ '+e.message); finish('error'); return;
+  }
+  if(replayGen!==gen) return;
+  if(!res.ok || !res.body){
+    let msg='relay error '+res.status;
+    try{ const j=await res.json(); if(j&&j.error) msg=j.error; }catch(e){}
+    stopPulse(); step('err','✖ '+msg); finish('error'); return;
+  }
+  let sawTerminal=false;
+  try{
+    await streamFrames(res, f=>{
+      if(replayGen!==gen) return;
+      if(f.type==='provisioned'){
+        liveIds={agentId:f.agentId, environmentId:f.environmentId, memoryStoreId:f.memoryStoreId};
+        updateSession2Availability();
+        return;
+      }
+      if(f.type==='done'||f.type==='error') sawTerminal=true;
+      handleFrame(f,sess);
+    });
+  }catch(e){
+    if(replayGen!==gen) return;
+    stopPulse(); step('err','✖ '+e.message); finish('stream closed'); return;
+  }
+  if(replayGen===gen && !sawTerminal) finish('stream closed');
+}
+
+async function streamFrames(response, onFrame){
+  const reader=response.body.getReader();
+  const decoder=new TextDecoder();
+  let buf='';
+  while(true){
+    const {value,done}=await reader.read();
+    if(done) break;
+    buf+=decoder.decode(value,{stream:true});
+    let idx;
+    while((idx=buf.indexOf('\n\n'))!==-1){
+      const chunk=buf.slice(0,idx);
+      buf=buf.slice(idx+2);
+      if(chunk.startsWith('data: ')){
+        try{ onFrame(JSON.parse(chunk.slice(6))); }catch(e){/* ignore malformed chunk */}
+      }
+    }
+  }
+}
+
+// Best-effort teardown of the ephemeral agent/environment/memory-store this
+// page provisioned. Fires after a completed live Session 2, and on unload as
+// a safety net (fetch+keepalive, not sendBeacon — beacon can't carry the
+// X-Anthropic-Key header). Guarded so it only ever fires once per arc.
+function attemptCleanup(){
+  if(cleanedUp || !liveIds || !liveKey) return;
+  cleanedUp=true;
+  const payload=Object.assign({action:'cleanup'}, liveIds);
+  fetch(HOLOCRON_LIVE_URL,{
+    method:'POST',
+    keepalive:true,
+    headers:{'Content-Type':'application/json','X-Anthropic-Key':liveKey},
+    body:JSON.stringify(payload)
+  }).catch(()=>{});
+}
+window.addEventListener('pagehide', ()=>{
+  attemptCleanup();
+  liveKey=null;
+});
 
 function appendBrief(text){
   const el=$('answer'); el.classList.remove('thinking');
@@ -471,7 +634,6 @@ function appendBrief(text){
 }
 
 function finish(why){
-  if(es){es.close();es=null;}
   const sess=activeSession;
   stopPulse();
   if(sess) stopHudTimer(sess);
@@ -484,6 +646,8 @@ function finish(why){
   }
   activeSession=null;
   updateQaPanel();
+  updateSession2Availability();
+  if(liveMode && sess===2 && why==='done') attemptCleanup();
 }
 
 // ── memory diff rendering ──────────────────────────────────────────────────────
